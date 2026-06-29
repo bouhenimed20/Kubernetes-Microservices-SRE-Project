@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spike-fortio-60s
+  namespace: prod-api
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: spike-fortio
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: fortio
+        image: fortio/fortio:latest
+        args:
+          - load
+          - -qps
+          - "0"
+          - -c
+          - "200"
+          - -t
+          - "60s"
+          - http://main-api/

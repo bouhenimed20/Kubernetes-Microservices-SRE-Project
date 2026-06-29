@@ -1,0 +1,181 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alertmanager-email-secret
+  namespace: kube-system
+type: Opaque
+stringData:
+  password: "lzed anue acnn cpdd"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: kube-system
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+      smtp_smarthost: 'smtp.gmail.com:587'
+      smtp_auth_username: 'hakjith@gmail.com'
+      smtp_auth_password_file: '/etc/alertmanager/secrets/email-password'
+      smtp_from: 'hakjith@gmail.com'
+
+    route:
+      group_by: ['alertname', 'cluster', 'service']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 12h
+      receiver: 'default'
+      routes:
+      - match:
+          severity: critical
+        receiver: 'critical-alerts'
+        continue: true
+      - match:
+          severity: warning
+        receiver: 'warning-alerts'
+
+    receivers:
+    - name: 'default'
+      email_configs:
+      - to: 'mohamed.bouheni@esprit.tn'
+        headers:
+          Subject: 'Alert: {{ .GroupLabels.alertname }}'
+        html: |
+          <h2>Alert: {{ .GroupLabels.alertname }}</h2>
+          <p><strong>Severity:</strong> {{ .GroupLabels.severity }}</p>
+          <p><strong>Service:</strong> {{ .GroupLabels.service }}</p>
+          {{ range .Alerts }}
+          <hr />
+          <h4>{{ .Labels.alertname }}</h4>
+          <p><strong>Status:</strong> {{ .Status }}</p>
+          <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+          <p><strong>Summary:</strong> {{ .Annotations.summary }}</p>
+          {{ end }}
+
+    - name: 'critical-alerts'
+      email_configs:
+      - to: 'mohamed.bouheni@esprit.tn'
+        headers:
+          Subject: 'CRITICAL: {{ .GroupLabels.alertname }}'
+        html: |
+          <h2 style="color: red;">CRITICAL ALERT: {{ .GroupLabels.alertname }}</h2>
+          <p><strong>Service:</strong> {{ .GroupLabels.service }}</p>
+          {{ range .Alerts }}
+          <hr />
+          <h4>{{ .Labels.alertname }}</h4>
+          <p><strong>Status:</strong> {{ .Status }}</p>
+          <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+          <p><strong>Summary:</strong> {{ .Annotations.summary }}</p>
+          {{ end }}
+
+    - name: 'warning-alerts'
+      email_configs:
+      - to: 'mohamed.bouheni@esprit.tn'
+        headers:
+          Subject: 'WARNING: {{ .GroupLabels.alertname }}'
+        html: |
+          <h2 style="color: orange;">WARNING: {{ .GroupLabels.alertname }}</h2>
+          <p><strong>Service:</strong> {{ .GroupLabels.service }}</p>
+          {{ range .Alerts }}
+          <hr />
+          <h4>{{ .Labels.alertname }}</h4>
+          <p><strong>Status:</strong> {{ .Status }}</p>
+          <p><strong>Description:</strong> {{ .Annotations.description }}</p>
+          <p><strong>Summary:</strong> {{ .Annotations.summary }}</p>
+          {{ end }}
+
+    inhibit_rules:
+    - source_match:
+        severity: 'critical'
+      target_match:
+        severity: 'warning'
+      equal: ['alertname', 'cluster', 'service']
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: kube-system
+  labels:
+    app: alertmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+      - name: alertmanager
+        image: prom/alertmanager:v0.26.0
+        args:
+        - '--config.file=/etc/alertmanager/alertmanager.yml'
+        - '--storage.path=/alertmanager'
+        - '--web.external-url=http://localhost:9093'
+        ports:
+        - containerPort: 9093
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/alertmanager
+        - name: storage
+          mountPath: /alertmanager
+        - name: email-secret
+          mountPath: /etc/alertmanager/secrets
+          readOnly: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 9093
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9093
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: alertmanager-config
+      - name: storage
+        emptyDir: {}
+      - name: email-secret
+        secret:
+          secretName: alertmanager-email-secret
+          items:
+          - key: password
+            path: email-password
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: kube-system
+  labels:
+    app: alertmanager
+spec:
+  type: ClusterIP
+  selector:
+    app: alertmanager
+  ports:
+  - port: 9093
+    targetPort: 9093
+    protocol: TCP
+    name: http
